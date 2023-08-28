@@ -1,0 +1,53 @@
+##Metagenome quality assement using MultiQC
+multiqc -n multiqc_output multiqc_input
+
+##Metagenome quality control using BBduk
+
+==Adapter removal and length trimming (first)
+/home/user/Programs/bbmap/bbduk.sh -Xmx400g \
+ in1=Sample_1.fastq.gz in2=Sample_2.fastq.gz \
+ out1=Sample.trim.1.fastq.gz out2=Sample.trim.2.fastq.gz \
+ ref=/home/user/Programs/bbmap/resources/adapters.fa \
+ ktrim=r k=23 mink=11 hdist=1 tpe tbo qtrim=rl trimq=10 minlen=100 t=72
+
+==phiX174 decontamination (second)
+/home/user/Programs/bbmap/bbduk.sh -Xmx400g \
+ in1=Sample.trim.1.fastq.gz in2=Sample.trim.2.fastq.gz \
+ out1=Sample.final.1.fastq.gz out2=Sample.final.2.fastq.gz outm=XXX.phiX.fastq.gz \
+ ref=/home/user/Programs/bbmap/resources/phix174_ill.ref.fa.gz \
+ k=31 hdist=1 stats=XXX.phiX.stats.txt t=72
+
+
+##Taxonomic classification using Kraken2
+kraken2 --db /home/user/Databases/kraken2/ --paired --threads 72 \
+ --output Sample.Kraken2.Paired --report Sample.Kraken2.Paired.report \
+ --gzip-compressed Sample_1.fastq.gz Sample_2.fastq.gz
+
+
+##Metagenome assembly using metaSPAdes
+nohup /home/user/Programs/SPAdes-3.15.4-Linux/bin/spades.py --meta -1 Sample_1.fastq -2 Sample_2.fastq \
+ -k 21,33,55,77,99,127 -m 450 -t 72 -o Sample.SPAdes > nohup.log 2>&1 &
+
+
+##Determining Assembly statistics
+metaquast.py -o metaQUAST -t 72 --max-ref-number 0 ./*.SPAdes/contigs.fasta
+
+
+##Metagenome binning using metaWrap
+
+==Intitial binning
+nohup metawrap binning -o Init_Bin_Sample -t 72 -a ASSEMBLY/Sample_contigs.fasta --metabat2 --maxbin2 --concoct CLEAN_READS/Sample_1.fastq Sample_2.fastq  > nohup.log 2>&1 &
+
+==Obtaining consolidate bin sets with Bin_refinement module
+nohup metawrap bin_refinement -o Bin_Refin_Sample -t 72 -A Init_Bin_Sample/metabat2_bins/ -B Init_Bin_Sample/maxbin2_bins/ -C Init_Bin_Sample/concoct_bins/ -c 50 -x 10 > nohup.log 2>&1 &
+
+
+##Dereplication of redundant bins using dRep
+nohup dRep dereplicate dRep_Output -g  Bin_Refin_Sample1/metawrap_bins/*.fa Bin_Refin_Sample2/metawrap_bins/*.fa -comp 50 -p 60 > nohup.log 2>&1 &
+
+
+##Quality assement of bins using CheckM2
+nohup ~/checkm2/bin/checkm2 predict -i dRep_Output/dereplicated_genomes/*.fa -o CheckM2_Output -t 72 > nohup.log 2>&1 &  
+
+##Taxonomic classification of final MAGs using GTDB-Tk
+nohup gtdbtk classify_wf --genome_dir dRep_Output/dereplicated_genomes -x fa --out_dir Bin_Classification --cpus 72 --pplacer_cpus 64 --full_tree --mash_db ./ > nohup.log 2>&1 &
